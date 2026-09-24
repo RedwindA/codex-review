@@ -6,16 +6,13 @@ An [Agent Skill](https://agentskills.io) for Claude Code: before reporting a fin
 
 ## Install
 
-```bash
-npx skills add RedwindA/codex-review
-```
-
-Or copy manually:
+Install for Claude Code only (user-level, no `.agents/` copy):
 
 ```bash
-git clone https://github.com/RedwindA/codex-review.git
-cp -r codex-review/skills/codex-review ~/.claude/skills/
+mkdir -p ~/.claude/skills && curl -fsSL https://github.com/RedwindA/codex-review/archive/main.tar.gz | tar -xz -C ~/.claude/skills --strip-components=2 codex-review-main/skills/codex-review
 ```
+
+Re-run the same command to update.
 
 ## Requirements
 

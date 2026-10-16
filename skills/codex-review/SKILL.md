@@ -44,7 +44,8 @@ argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] 
    - 这次改动要作为 PR 提交到**别人维护的仓库**时（例如 `git remote -v` 里有 `upstream`，或 origin 不属于用户），至少用 `deep`：那里消耗的是维护者的时间。
    - 你知道脚本看不出来的风险时（例如改动很小但涉及并发、缓存失效、数据删除），可以往上调档，并在汇报里说明原因；不要往下调。
    - 敏感路径、skip 列表和行数阈值可以在仓库的审查备注里覆盖，格式见 `scripts/classify.sh` 文件头。
-6. 维护一份**处理记录**（ledger），每轮都要带给 codex：
+6. **读审查备注**：`classify.sh` 输出的 `notes=` 非空时，读这个文件。frontmatter 之后的正文是这个仓库跨会话积累的审查规则（项目约定、"这类问题不要报"及其原因），每一轮都原样放进 prompt 的 `Repo review notes` 一节。
+7. 维护一份**处理记录**（ledger），每轮都要带给 codex：
    - 已修复：`[轮次] 标题 — 怎么修的`
    - 已拒绝：`[轮次] 标题 — 拒绝理由（具体说明为什么不成立或不必要）`
 
@@ -66,6 +67,10 @@ You are reviewing code changes made by another engineer. Do not modify any files
 
 ## Intent of the change
 <2-6 句：用户要什么、你做了什么、关键的设计取舍>
+
+## Repo review notes
+<审查备注正文；没有备注就删掉这一节>
+Follow these notes: they record what this repo does and does not want reported, and why.
 
 ## Review guidance
 - Report only issues that are real and actionable: bugs, behavioral regressions, broken edge cases that can actually occur, security problems, concurrency/resource issues, clear violations of this repo's conventions (AGENTS.md / CLAUDE.md), and missing tests for new behavior.
@@ -93,6 +98,10 @@ Read surrounding code only as far as you need to judge the delta. Do not re-revi
 
 ## Fixes to verify
 <上一轮修复的条目：标题、原问题一句话（含触发场景）、怎么修的>
+
+## Repo review notes
+<审查备注正文；没有备注就删掉这一节>
+Follow these notes: they record what this repo does and does not want reported, and why.
 
 ## Review guidance
 - For each fix: does it actually resolve the original finding, including its triggering scenario? Is it complete?
@@ -193,6 +202,11 @@ Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮�
 - 已拒绝：<条目 — 理由>
 - 需要你决定：<有争议的设计取舍，没有就省略>
 - 顺带发现：<超出范围的既有问题，没有就省略>
+- 建议写入审查备注：<可复用的拒绝理由，没有就省略>
 ```
+
+**沉淀审查备注**：如果某条拒绝理由是这个仓库的通用规律，而不只是这一处代码的事实（例如"内部 RPC 的入参已在网关校验，handler 里不要再校验"或"本项目只支持 Linux"），把它写成一条可以直接放进备注的规则，列在"建议写入审查备注"里，用户同意后再写入：
+- 用户自己维护的仓库：写进仓库根目录的 `REVIEW.md`（没有就新建，只写正文；需要覆盖定档规则时才加 frontmatter）。
+- 别人维护的仓库（例如开源贡献）：写进 `$(git rev-parse --path-format=absolute --git-common-dir)/codex-review/REVIEW.md`，它不会进入提交和 PR。仓库根目录已有 `REVIEW.md` 时，私有文件不会被读取，先告诉用户。
 
 如果 review 没有完成（CLI 出错、达到轮次上限），直接说明，不要写成"已通过"。

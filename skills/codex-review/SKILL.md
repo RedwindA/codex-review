@@ -20,9 +20,10 @@ argument-hint: "[--base <branch> | --commit <sha>] [额外关注点]"
    - `--base <branch>`：当前分支相对该分支的改动。
    - `--commit <sha>`：该提交引入的改动。
    - 如果工作区里混有**不属于本次任务**的改动（对照会话开始时的 git status），在 prompt 里列出本次任务涉及的文件，让 codex 只看这些文件。
-2. 在 scratchpad 目录（没有就用 `mktemp -d`）下建一个工作目录 `$DIR`，每轮使用 `$DIR/round-N-prompt.md` 和 `$DIR/round-N-review.md`。
-3. 每轮启动 codex 之前，先记录工作区快照：`"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh" > "$DIR/round-N.tree"`。它输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。第 N 轮（N≥2）要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
-4. 维护一份**处理记录**（ledger），每轮都要带给 codex：
+2. **先跑确定性检查，全绿再启动 codex。** 按仓库规范（AGENTS.md / CLAUDE.md / CI 配置）跑格式化、lint、类型检查和相关测试，有失败就先修好。不要把 linter 和测试能抓到的问题留给 codex 花几分钟去找；也不要在 codex 运行期间才发现测试挂了，那样修复后 codex 审的就是旧代码。
+3. 在 scratchpad 目录（没有就用 `mktemp -d`）下建一个工作目录 `$DIR`，每轮使用 `$DIR/round-N-prompt.md` 和 `$DIR/round-N-review.md`。
+4. 每轮启动 codex 之前，先记录工作区快照：`"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh" > "$DIR/round-N.tree"`。它输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。第 N 轮（N≥2）要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
+5. 维护一份**处理记录**（ledger），每轮都要带给 codex：
    - 已修复：`[轮次] 标题 — 怎么修的`
    - 已拒绝：`[轮次] 标题 — 拒绝理由（具体说明为什么不成立或不必要）`
 
@@ -109,7 +110,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
    - 用 `sleep`、`while` 循环、Monitor 或 ScheduleWakeup 去检查进度；
    - 反复 `tail`/`cat` 日志或输出文件，或用 `ps`/`pgrep` 查 codex 是否还在跑；
    - 在结束前读取 `round-N-review.md`（codex 结束时才写入，中途读到的要么不存在，要么是旧内容）。
-3. 等待期间可以做和 review 结论无关、且不修改被审代码的工作，比如跑还没跑的测试或 lint、整理处理记录、起草汇报的其余部分。**不要改动被审文件**，否则 codex 看到的代码和你之后修复的代码会不一致。
+3. 等待期间可以做和 review 结论无关、且不修改被审代码的工作，比如整理处理记录、起草汇报的其余部分。**不要改动被审文件**，否则 codex 看到的代码和你之后修复的代码会不一致。
 4. 没有其他事可做时，直接结束本轮回复，告诉用户"codex review 第 N 轮正在后台运行（通常需要 X 分钟），完成后自动继续"。不要为了等待而保持回合开着。
 5. 收到完成通知后，读取通知里的输出（即脚本打印的最终结论），退出码非 0 时再看日志尾部，然后进入第 4 步。
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
@@ -142,7 +143,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 
 ## 5. 修复并复审
 
-1. 修复所有"有效"项，按仓库规范跑相关的格式化和测试（例如 AGENTS.md 要求的 `just fmt`、`just test -p ...`）。
+1. 修复所有"有效"项，按仓库规范跑相关的格式化和测试（例如 AGENTS.md 要求的 `just fmt`、`just test -p ...`），全绿后再进入下一轮。
 2. 更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
 3. **通过条件**，满足任一即可：
    - codex 明确表示没有可操作的问题；

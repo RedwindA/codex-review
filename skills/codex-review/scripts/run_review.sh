@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Usage: run_review.sh <prompt-file> <output-file> [full|verify]
+# Usage: run_review.sh <prompt-file> <output-file> [quick|standard|deep|verify]
 # Runs a read-only codex review in the current git repo root. The prompt is fed via stdin.
-# `full` (default) is the first, whole-change review; `verify` checks only the fixes since the
-# previous round and runs at a lower reasoning effort.
+# The mode picks the reasoning effort: quick/standard/deep are first-round tiers chosen by
+# classify.sh; `verify` checks only the fixes since the previous round.
 set -euo pipefail
 
 prompt_file=$1
 out_file=$2
-mode=${3:-full}
+mode=${3:-standard}
 model=${CODEX_REVIEW_MODEL:-gpt-6-astra}
 case "$mode" in
-  full) effort=${CODEX_REVIEW_EFFORT:-xhigh} ;;
-  verify) effort=${CODEX_REVIEW_VERIFY_EFFORT:-high} ;;
-  *) echo "unknown mode: $mode (expected full or verify)" >&2; exit 2 ;;
+  quick) effort=${CODEX_REVIEW_QUICK_EFFORT:-high} default_timeout=900 ;;
+  standard) effort=${CODEX_REVIEW_EFFORT:-high} default_timeout=900 ;;
+  deep) effort=${CODEX_REVIEW_DEEP_EFFORT:-xhigh} default_timeout=1800 ;;
+  verify) effort=${CODEX_REVIEW_VERIFY_EFFORT:-high} default_timeout=900 ;;
+  *) echo "unknown mode: $mode (expected quick, standard, deep or verify)" >&2; exit 2 ;;
 esac
 # Hard cap so the background task always exits and triggers a completion notification.
-timeout_secs=${CODEX_REVIEW_TIMEOUT:-1800}
+timeout_secs=${CODEX_REVIEW_TIMEOUT:-$default_timeout}
 
 cd "$(git rev-parse --show-toplevel)"
 log_file="${out_file%.*}.log"

@@ -47,6 +47,16 @@ Each repo can keep review notes that every round sends to Codex: project convent
 
 The body is free text. Optional YAML frontmatter overrides the tiering rules (`deep`, `skip`, `quick_max_lines`, `deep_min_lines`). When a rejection reason generalizes, Claude proposes a note in its report and writes it only after you agree.
 
+## Stats
+
+Each codex run appends a `round` record (mode, effort, seconds, exit status) to `~/.codex-review/stats.jsonl`, and Claude adds a `session` record when a review ends (tier, rounds, result, fixed, rejected, nits, pre-existing). `scripts/stats.sh` summarizes them: time per mode, and per tier the average rounds, first-round pass rate and rejection rate. A week or two of data tells you whether the thresholds and efforts are paying off, e.g. whether `deep` finds enough more than `standard` to justify `xhigh`. Set `CODEX_REVIEW_STATS` to another path, or to `/dev/null` to turn this off.
+
+When a bug the review should have caught turns up later, record it so the misses are counted too, and keep the commit around as a regression case for prompt or effort changes:
+
+```bash
+~/.claude/skills/codex-review/scripts/record_stats.sh kind=miss repo="$PWD" commit=<sha> note="<what was missed>"
+```
+
 ## Layout
 
 ```
@@ -58,8 +68,10 @@ The body is free text. Optional YAML frontmatter overrides the tiering rules (`d
         ├── SKILL.md
         └── scripts/
             ├── classify.sh
+            ├── record_stats.sh
             ├── run_review.sh
-            └── snapshot.sh
+            ├── snapshot.sh
+            └── stats.sh
 ```
 
 ## License

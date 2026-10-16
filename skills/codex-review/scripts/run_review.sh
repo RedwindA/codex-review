@@ -6,7 +6,11 @@
 # With a snapshot (a tree id from snapshot.sh, or a commit), codex runs in a temporary detached
 # worktree checked out at that snapshot, so the real working tree can keep changing while it
 # reviews; the worktree is removed on exit. Without one, codex runs in the repo root.
+# Each run appends a `round` record (mode, effort, seconds, exit status) via record_stats.sh; the
+# output file's directory is the session id.
 set -euo pipefail
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
 
 prompt_file=$1
 out_file=$2
@@ -28,7 +32,8 @@ out_file=$(realpath -m "$out_file")
 log_file="${out_file%.*}.log"
 rm -f "$out_file"
 
-cd "$(git rev-parse --show-toplevel)"
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
 if [ -n "$snapshot" ]; then
   case "$(git cat-file -t "$snapshot")" in
     commit) commit=$snapshot ;;
@@ -54,20 +59,27 @@ if [ -n "$snapshot" ]; then
   cd "$worktree"
 fi
 
+start=$SECONDS
+status=0
 timeout --kill-after=30 "$timeout_secs" codex exec review \
   -m "$model" \
   -c "model_reasoning_effort=\"$effort\"" \
   -c 'sandbox_mode="read-only"' \
   --ephemeral \
   -o "$out_file" \
-  - < "$prompt_file" > "$log_file" 2>&1 || {
-    status=$?
-    if [ "$status" -eq 124 ]; then
-      echo "codex review timed out after ${timeout_secs}s" >&2
-    fi
-    echo "codex review failed (exit $status); last log lines:" >&2
-    tail -40 "$log_file" >&2
-    exit "$status"
-  }
+  - < "$prompt_file" > "$log_file" 2>&1 || status=$?
+
+"$script_dir/record_stats.sh" kind=round session="$(dirname "$out_file")" repo="$repo_root" \
+  mode="$mode" effort="$effort" model="$model" seconds=$((SECONDS - start)) exit="$status" ||
+  echo "warning: could not record stats" >&2
+
+if [ "$status" -ne 0 ]; then
+  if [ "$status" -eq 124 ]; then
+    echo "codex review timed out after ${timeout_secs}s" >&2
+  fi
+  echo "codex review failed (exit $status); last log lines:" >&2
+  tail -40 "$log_file" >&2
+  exit "$status"
+fi
 
 cat "$out_file"

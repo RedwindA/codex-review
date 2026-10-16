@@ -1,8 +1,8 @@
 # codex-review
 
-An [Agent Skill](https://agentskills.io) for Claude Code: before reporting a finished coding task, have the Codex CLI (`gpt-6-astra`) review the change at a reasoning effort matched to its risk (`xhigh` only for large or sensitive changes), verify each finding, reject pointless defensive programming, fix the real issues, then have Codex check only those fixes at `high` reasoning until it passes.
+An [Agent Skill](https://agentskills.io) for Claude Code: before reporting a finished coding task, have the Codex CLI review the change with a model and reasoning effort matched to its risk (`gpt-6-astra` for ordinary changes, at `xhigh` only for large or sensitive ones; the cheaper `gpt-6.1-sol` for small ones), verify each finding, reject pointless defensive programming, fix the real issues, then have `gpt-6.1-sol` check only those fixes until it passes.
 
-在 Claude Code 完成代码任务、向用户汇报之前，调用 Codex CLI（`gpt-6-astra`）做独立 review：首轮按改动风险分档全面审查（只有大改动或敏感路径才用 xhigh），逐条核验意见，拒绝无意义的防御性编程，修复有效问题后，之后每轮只用 high 核验修复，直到通过。
+在 Claude Code 完成代码任务、向用户汇报之前，调用 Codex CLI 做独立 review：首轮按改动风险分档全面审查（小改动用更便宜的 `gpt-6.1-sol`，普通改动用 `gpt-6-astra`，只有大改动或敏感路径才用 xhigh），逐条核验意见，拒绝无意义的防御性编程，修复有效问题后，之后每轮只用 `gpt-6.1-sol` 核验修复，直到通过。
 
 ## Install
 
@@ -17,7 +17,16 @@ Re-run the same command to update.
 ## Requirements
 
 - [Codex CLI](https://github.com/openai/codex) installed and logged in (`codex login`)
-- Access to the `gpt-6-astra` model, or override it with `CODEX_REVIEW_MODEL`; reasoning effort per mode with `CODEX_REVIEW_QUICK_EFFORT` / `CODEX_REVIEW_EFFORT` (standard) / `CODEX_REVIEW_DEEP_EFFORT` / `CODEX_REVIEW_VERIFY_EFFORT` (defaults `high` / `high` / `xhigh` / `high`)
+- Access to `gpt-6-astra` and `gpt-6.1-sol`. Per mode defaults and overrides:
+
+  | Mode | Model (`CODEX_REVIEW_<MODE>_MODEL`) | Effort |
+  |---|---|---|
+  | `quick` | `gpt-6.1-sol` | `high` (`CODEX_REVIEW_QUICK_EFFORT`) |
+  | `standard` | `gpt-6-astra` | `high` (`CODEX_REVIEW_EFFORT`) |
+  | `deep` | `gpt-6-astra` | `xhigh` (`CODEX_REVIEW_DEEP_EFFORT`) |
+  | `verify` | `gpt-6.1-sol` | `high` (`CODEX_REVIEW_VERIFY_EFFORT`) |
+
+  `CODEX_REVIEW_MODEL` replaces the default model of every mode.
 - `git` and GNU `timeout` (coreutils); on macOS, install coreutils
 
 ## How it works
@@ -27,14 +36,14 @@ Re-run the same command to update.
    | Tier | Default rule | First round |
    |---|---|---|
    | `skip` | only docs, licenses, lockfiles, snapshots, images | no Codex; green checks suffice |
-   | `quick` | ≤ 50 lines, no sensitive path | `high`, no verify rounds |
-   | `standard` | everything else | `high` |
-   | `deep` | > 400 lines, or touches auth, secrets, billing, migrations, CI, deploy/release/install paths | `xhigh` |
+   | `quick` | ≤ 50 lines, no sensitive path | `gpt-6.1-sol` `high`, no verify rounds |
+   | `standard` | everything else | `gpt-6-astra` `high` |
+   | `deep` | > 400 lines, or touches auth, secrets, billing, migrations, CI, deploy/release/install paths | `gpt-6-astra` `xhigh` |
 
    PRs to repos you don't maintain get at least `deep`. Override with `--tier`, or per repo in the YAML frontmatter of `REVIEW.md` (format in the header of `scripts/classify.sh`).
 2. Once lint, type checks and tests are green, run `codex exec review` in a read-only sandbox, with the change's intent and a ledger of previously fixed/rejected findings.
 3. Verify every finding (Codex tags each as `[Important]`, `[Nit]` or `[Pre-existing]` and names its bug class): fix real bugs, and every other instance of the same class in the change; reject false positives and defensive checks for states the types or callers already rule out; surface out-of-scope issues and design trade-offs to the user.
-4. Fix, re-run tests, then run a verify round: Codex reviews only the fix delta between two working-tree snapshots (`git diff <prev-tree> <cur-tree>`, taken by `scripts/snapshot.sh` without touching the index), at `high` reasoning, instead of re-reviewing the whole change. Verify rounds run only when a non-trivial fix of an `[Important]` finding needs checking; Nit-only, test-only or mechanical fixes stop at green tests. Stops when Codex has no new actionable findings, or after 3 rounds, at which point the approach itself is put back to the user.
+4. Fix, re-run tests, then run a verify round: Codex reviews only the fix delta between two working-tree snapshots (`git diff <prev-tree> <cur-tree>`, taken by `scripts/snapshot.sh` without touching the index), with `gpt-6.1-sol` at `high`, instead of re-reviewing the whole change. Verify rounds run only when a non-trivial fix of an `[Important]` finding needs checking; Nit-only, test-only or mechanical fixes stop at green tests. Stops when Codex has no new actionable findings, or after 3 rounds, at which point the approach itself is put back to the user.
 
 Reviews don't block. Each round checks out its working-tree snapshot into a temporary detached worktree (no hooks, no LFS downloads) and runs Codex there as a Claude Code background task, so Claude can report the task right away, keep working, or start your next task while Codex reviews the frozen code; it resumes on the completion notification instead of polling, and the review summary follows as a separate message. A hard timeout (`CODEX_REVIEW_TIMEOUT`, default 1800s for `deep`, 900s otherwise) guarantees the task exits.
 
@@ -64,7 +73,15 @@ On WSL, cron only runs while the distro is running, and is not started by defaul
 
 ## Stats
 
-Each codex run appends a `round` record (mode, effort, seconds, exit status) to `~/.codex-review/stats.jsonl`, and Claude adds a `session` record when a review ends (tier, rounds, result, fixed, rejected, nits, pre-existing). `scripts/stats.sh` summarizes them: time per mode, and per tier the average rounds, first-round pass rate and rejection rate. A week or two of data tells you whether the thresholds and efforts are paying off, e.g. whether `deep` finds enough more than `standard` to justify `xhigh`. Set `CODEX_REVIEW_STATS` to another path, or to `/dev/null` to turn this off.
+Each codex run appends a `round` record (mode, model, effort, seconds, exit status, input / cached / output tokens) to `~/.codex-review/stats.jsonl`, and Claude adds a `session` record when a review ends (tier, rounds, result, fixed, rejected, nits, pre-existing). `scripts/stats.sh` summarizes them: time and tokens per mode and model, cost per day, and per tier the average rounds, first-round pass rate and rejection rate. A week or two of data tells you whether the thresholds, models and efforts are paying off, e.g. whether `deep` finds enough more than `standard` to justify `xhigh`. Set `CODEX_REVIEW_STATS` to another path, or to `/dev/null` to turn this off.
+
+Token usage comes from the review thread's Codex session file (`codex exec review --json` reports zeros), so reviews are no longer `--ephemeral` and stay in `~/.codex/sessions`. For costs, put your prices in `~/.codex-review/prices.tsv` (or `CODEX_REVIEW_PRICES`), USD per million tokens:
+
+```
+# model       input  cached-input  output
+gpt-6-astra   <in>   <cached>      <out>
+gpt-6.1-sol   <in>   <cached>      <out>
+```
 
 When a bug the review should have caught turns up later, record it so the misses are counted too, and keep the commit around as a regression case for prompt or effort changes:
 

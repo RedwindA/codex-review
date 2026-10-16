@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: 在代码任务完成时，调用 Codex CLI（gpt-6-astra）在冻结的工作区快照上对本次改动做独立 review，后台运行、不阻塞汇报和后续工作：首轮按改动的风险分档（skip / quick / standard 用 high，deep 用 xhigh）全面审查，之后只用 high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，用户说"让 codex review""codex 审一下"时使用，或用户让你处理夜间 review 报告时使用。
+description: 在代码任务完成时，调用 Codex CLI 在冻结的工作区快照上对本次改动做独立 review，后台运行、不阻塞汇报和后续工作：首轮按改动的风险分档（quick 用 gpt-6.1-sol，standard 用 gpt-6-astra high，deep 用 gpt-6-astra xhigh，skip 不审）全面审查，之后只用 gpt-6.1-sol high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，用户说"让 codex review""codex 审一下"时使用，或用户让你处理夜间 review 报告时使用。
 user-invocable: true
 argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] [额外关注点]"
 ---
@@ -41,9 +41,9 @@ argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] 
    | 档位 | 默认条件 | 首轮 | 核验轮 |
    |---|---|---|---|
    | `skip` | 改动的文件全是文档、许可证、lockfile、快照、图片 | 不跑 codex，测试和 lint 全绿即可 | 无 |
-   | `quick` | 不超过 50 行，且没碰敏感路径 | `high` | 无，修复靠测试把关 |
-   | `standard` | 其他普通改动 | `high` | 按第 5 节规则 |
-   | `deep` | 超过 400 行，或碰了鉴权、密钥、计费、数据迁移、CI、部署/发布/安装脚本等敏感路径 | `xhigh` | 按第 5 节规则 |
+   | `quick` | 不超过 50 行，且没碰敏感路径 | `gpt-6.1-sol` `high` | 无，修复靠测试把关 |
+   | `standard` | 其他普通改动 | `gpt-6-astra` `high` | 按第 5 节规则（`gpt-6.1-sol` `high`） |
+   | `deep` | 超过 400 行，或碰了鉴权、密钥、计费、数据迁移、CI、部署/发布/安装脚本等敏感路径 | `gpt-6-astra` `xhigh` | 按第 5 节规则（`gpt-6.1-sol` `high`） |
 
    - 用户参数里的 `--tier` 优先于脚本结果。
    - 这次改动要作为 PR 提交到**别人维护的仓库**时（例如 `git remote -v` 里有 `upstream`，或 origin 不属于用户），至少用 `deep`：那里消耗的是维护者的时间。
@@ -138,7 +138,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 
 - 脚本把快照检出到临时 worktree（`$DIR/round-N-review.wt`，跳过 hooks 和 LFS 下载），在那里运行 codex，退出时删除 worktree。codex 读的是冻结的快照，所以你在它运行期间改代码不会影响它。如果脚本被强行中止，`git worktree list` 里可能留下这个 worktree，用 `git worktree remove --force <路径>` 清理。
 - 仓库很大、检出明显很慢时，可以省略第四个参数，让 codex 直接读真实工作区。这时 prompt 的 Scope 要改成读当前工作区，而且在它结束前**不要改动被审文件**。
-- 脚本以 `-m gpt-6-astra`、只读沙箱和 `--ephemeral` 运行，打印 codex 的最终结论。思考强度：`deep` 是 `xhigh`，`quick`、`standard` 和 `verify` 是 `high`。完整过程日志保存在 `$DIR/round-N-review.log`。
+- 脚本按档位选模型和思考强度（见第 1 节的档位表），在只读沙箱里运行，打印 codex 的最终结论，最后一行是 `[codex-review] mode=… model=… effort=… seconds=… input_tokens=…`，汇报 review 摘要时用得上。stderr 在 `$DIR/round-N-review.log`，事件流在 `$DIR/round-N-review.events.jsonl`。为了从 codex 的 session 记录里读出 token 用量，脚本不再用 `--ephemeral`，所以 review 线程会留在 `~/.codex/sessions` 里。
 - 脚本自带硬超时（`deep` 默认 1800 秒，其他 900 秒，可用 `CODEX_REVIEW_TIMEOUT` 覆盖），保证进程一定会退出，从而一定会触发完成通知。
 
 ### 等待方式：后台运行，不阻塞，不要轮询
@@ -157,7 +157,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 5. 意见指向的是快照里的代码，文件路径可能带着临时 worktree 的前缀（`…/round-N-review.wt/`），去掉前缀就是仓库内的相对路径。核验时以当前代码为准：先确认那段代码还在、问题仍然存在，行号可能已经变了。
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
 
-- 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL`、`CODEX_REVIEW_DEEP_EFFORT` / `CODEX_REVIEW_EFFORT`（standard）/ `CODEX_REVIEW_QUICK_EFFORT` / `CODEX_REVIEW_VERIFY_EFFORT` 覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
+- 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量覆盖模型和思考强度（`CODEX_REVIEW_<MODE>_MODEL`，例如 `CODEX_REVIEW_DEEP_MODEL`；`CODEX_REVIEW_MODEL` 改所有档位的默认模型；思考强度用 `CODEX_REVIEW_DEEP_EFFORT` / `CODEX_REVIEW_EFFORT`（standard）/ `CODEX_REVIEW_QUICK_EFFORT` / `CODEX_REVIEW_VERIFY_EFFORT`），但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
 - 输出格式通常是 `- [P0..P3] [Important|Nit|Pre-existing] 标题 — 文件:行`，加一段说明和一行 `Class:`。
 
 ## 4. 逐条核验（关键步骤）
@@ -205,7 +205,7 @@ codex 给的标签只是参考，判定以你的核验为准：
 review 结束后给出简短的 review 摘要。如果第 1 轮启动后你已经先汇报过任务结果，就单独发一条消息，只写 review 摘要和因 review 而做的改动，不要重复整份汇报：
 
 ```
-Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮后通过
+Codex review（<tier> 档：<reason>；首轮 <model> <effort>，<秒数>s，<输入 token 数>k in / <输出 token 数>k out）：N 轮后通过
 - 已修复：<条目 — 一句话说明>
 - 已拒绝：<条目 — 理由>
 - 需要你决定：<有争议的设计取舍，没有就省略>

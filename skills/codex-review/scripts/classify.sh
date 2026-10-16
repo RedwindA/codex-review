@@ -100,7 +100,7 @@ if [ -n "$notes" ]; then
       if [[ $value == \[*\] ]]; then
         value=${value:1:${#value}-2}
         IFS=',' read -ra items <<<"$value"
-        for item in "${items[@]}"; do
+        for item in ${items[@]+"${items[@]}"}; do
           add_pattern "$item"
         done
       fi
@@ -122,8 +122,14 @@ matches_any() {
 
 if [ "$#" -eq 0 ] || [ "$1" = "--" ]; then
   head_tree=$(git rev-parse -q --verify 'HEAD^{tree}' || git hash-object -t tree /dev/null)
-  set -- "$head_tree" "$("$script_dir/snapshot.sh")" "$@"
+  work_tree=$("$script_dir/snapshot.sh")
+  set -- "$head_tree" "$work_tree" "$@"
 fi
+
+# Run the diff on its own so a bad revision fails here instead of reading as an empty change.
+numstat=$(mktemp)
+trap 'rm -f "$numstat"' EXIT
+git diff --numstat -z --no-renames "$@" >"$numstat"
 
 lines=0
 files=0
@@ -140,7 +146,7 @@ while IFS=$'\t' read -r -d '' added deleted path; do
   if [ "${#deep_patterns[@]}" -gt 0 ] && matches_any "$path" "${deep_patterns[@]}"; then
     deep_hits+=("$path")
   fi
-done < <(git diff --numstat -z --no-renames "$@")
+done <"$numstat"
 
 if [ "$files" -eq 0 ] && [ "$skipped" -eq 0 ]; then
   tier=skip

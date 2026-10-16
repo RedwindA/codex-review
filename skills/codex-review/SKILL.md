@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: 在代码任务完成后、向用户汇报之前，调用 Codex CLI（gpt-6-astra，xhigh 思考强度）对本次改动做独立 review；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再次提交 review，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，或用户说"让 codex review""codex 审一下"时使用。
+description: 在代码任务完成后、向用户汇报之前，调用 Codex CLI（gpt-6-astra）对本次改动做独立 review：首轮 xhigh 全面审查，之后每轮只用 high 核验修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，或用户说"让 codex review""codex 审一下"时使用。
 user-invocable: true
 argument-hint: "[--base <branch> | --commit <sha>] [额外关注点]"
 ---
@@ -21,13 +21,18 @@ argument-hint: "[--base <branch> | --commit <sha>] [额外关注点]"
    - `--commit <sha>`：该提交引入的改动。
    - 如果工作区里混有**不属于本次任务**的改动（对照会话开始时的 git status），在 prompt 里列出本次任务涉及的文件，让 codex 只看这些文件。
 2. 在 scratchpad 目录（没有就用 `mktemp -d`）下建一个工作目录 `$DIR`，每轮使用 `$DIR/round-N-prompt.md` 和 `$DIR/round-N-review.md`。
-3. 维护一份**处理记录**（ledger），每轮都要带给 codex：
+3. 每轮启动 codex 之前，先记录工作区快照：`"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh" > "$DIR/round-N.tree"`。它输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。第 N 轮（N≥2）要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
+4. 维护一份**处理记录**（ledger），每轮都要带给 codex：
    - 已修复：`[轮次] 标题 — 怎么修的`
    - 已拒绝：`[轮次] 标题 — 拒绝理由（具体说明为什么不成立或不必要）`
 
 ## 2. 写 review prompt
 
-`codex exec review` 的 `--uncommitted/--base/--commit` 不能和自定义 prompt 同时使用，所以范围写在 prompt 里。模板：
+`codex exec review` 的 `--uncommitted/--base/--commit` 不能和自定义 prompt 同时使用，所以范围写在 prompt 里。
+
+只有第 1 轮全面审查整个改动。从第 2 轮起，codex 只核验上一轮之后的修复，不再重审没动过的代码。
+
+### 2a. 第 1 轮：全面审查
 
 ```markdown
 You are reviewing code changes made by another engineer. Do not modify any files.
@@ -47,28 +52,57 @@ You are reviewing code changes made by another engineer. Do not modify any files
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
 - If there are no actionable issues, say explicitly: "No actionable issues found."
 
-## Previous rounds
-<第一轮写 "None."；之后粘贴处理记录。>
-Fixed items: verify the fixes are correct and did not introduce new problems.
-Rejected items: do not re-raise them unless you have a NEW concrete argument (a reproducible scenario or evidence the rejection reasoning is wrong). If you still disagree, state it once under "Disputed" with that evidence.
 ```
 
-用户在参数里给出的额外关注点，加到 Review guidance 里。
+### 2b. 第 2 轮起：只核验修复
+
+```markdown
+You are verifying fixes another engineer made after a previous code review. Do not modify any files.
+
+## Scope
+Review only the fix delta since the previous round: `git diff <round-(N-1) tree> <round-N tree>`.
+Both ids are git tree snapshots of the working tree; the current working tree matches <round-N tree>.
+Read surrounding code only as far as you need to judge the delta. Do not re-review code the delta does not touch.
+
+## Intent of the change
+<和第 1 轮相同的 2-6 句>
+
+## Fixes to verify
+<上一轮修复的条目：标题、原问题一句话（含触发场景）、怎么修的>
+
+## Review guidance
+- For each fix: does it actually resolve the original finding, including its triggering scenario? Is it complete?
+- Report new problems only if the delta introduces them: bugs, behavioral regressions, broken edge cases that can actually occur, security problems, and missing tests for the fix.
+- Do not report issues in code the delta did not change, unless the delta now relies on that code in a way that breaks.
+- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
+- Do NOT report pure style preferences or speculative refactors.
+- For each finding, give file:line, a concrete triggering scenario, and the fix.
+- If every fix holds and the delta introduces no actionable issue, say explicitly: "No actionable issues found."
+
+## Rejected items
+<所有轮次中已拒绝的条目和理由；没有就写 "None.">
+Do not re-raise them unless you have a NEW concrete argument (a reproducible scenario or evidence the rejection reasoning is wrong). If you still disagree, state it once under "Disputed" with that evidence.
+```
+
+用户在参数里给出的额外关注点，加到两个模板的 Review guidance 里。
 
 ## 3. 运行
 
 ```bash
-"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-N-prompt.md" "$DIR/round-N-review.md"
+# 第 1 轮
+"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-1-prompt.md" "$DIR/round-1-review.md"
+# 第 2 轮起
+"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-N-prompt.md" "$DIR/round-N-review.md" verify
 ```
 
-（`${CLAUDE_SKILL_DIR}` 指本 SKILL.md 所在目录。如果它没有被替换成实际路径，就用本文件旁边的 `scripts/run_review.sh` 的绝对路径。）
+（`${CLAUDE_SKILL_DIR}` 指本 SKILL.md 所在目录。如果它没有被替换成实际路径，就用本文件旁边 `scripts/` 下脚本的绝对路径。）
 
-- 脚本会 cd 到 git 仓库根目录，以 `-m gpt-6-astra -c model_reasoning_effort="xhigh"`、只读沙箱和 `--ephemeral` 运行，打印 codex 的最终结论。完整过程日志保存在 `$DIR/round-N-review.log`。
+- 脚本会 cd 到 git 仓库根目录，以 `-m gpt-6-astra`、只读沙箱和 `--ephemeral` 运行，打印 codex 的最终结论。思考强度：第 1 轮是 `xhigh`，`verify` 轮是 `high`。完整过程日志保存在 `$DIR/round-N-review.log`。
 - 脚本自带硬超时（默认 1800 秒，可用 `CODEX_REVIEW_TIMEOUT` 覆盖），保证进程一定会退出，从而一定会触发完成通知。
 
 ### 等待方式：后台运行 + 完成通知，不要轮询
 
-xhigh 对中等规模的改动可能要跑 10–30 分钟，已经超过前台 Bash 最长 10 分钟的上限。因此：
+第 1 轮 xhigh 通常要 5–10 分钟，改动大时更久，可能超过前台 Bash 最长 10 分钟的上限；核验轮也统一按同样方式运行。因此：
 
 1. **每轮都用 Bash 的 `run_in_background: true` 启动脚本。** 进程退出后，Claude Code 会自动重新唤醒你，这个通知就是唯一的等待信号。
 2. 启动后，**禁止**做以下任何事：
@@ -80,7 +114,7 @@ xhigh 对中等规模的改动可能要跑 10–30 分钟，已经超过前台 B
 5. 收到完成通知后，读取通知里的输出（即脚本打印的最终结论），退出码非 0 时再看日志尾部，然后进入第 4 步。
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
 
-- 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT` 覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
+- 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`（第 1 轮）/ `CODEX_REVIEW_VERIFY_EFFORT`（核验轮）覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
 - 输出格式通常是 `- [P0..P3] 标题 — 文件:行` 加一段说明。
 
 ## 4. 逐条核验（关键步骤）
@@ -109,7 +143,7 @@ xhigh 对中等规模的改动可能要跑 10–30 分钟，已经超过前台 B
 ## 5. 修复并复审
 
 1. 修复所有"有效"项，按仓库规范跑相关的格式化和测试（例如 AGENTS.md 要求的 `just fmt`、`just test -p ...`）。
-2. 更新处理记录，然后进入下一轮（回到第 2 步，轮次 +1）。
+2. 更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
 3. **通过条件**，满足任一即可：
    - codex 明确表示没有可操作的问题；
    - codex 剩下的意见全是此前已拒绝的项，且没有提出新的具体证据；
@@ -122,7 +156,7 @@ xhigh 对中等规模的改动可能要跑 10–30 分钟，已经超过前台 B
 在给用户的最终汇报末尾附上简短的 review 摘要：
 
 ```
-Codex review（gpt-6-astra xhigh）：N 轮后通过
+Codex review（gpt-6-astra，首轮 xhigh、核验 high）：N 轮后通过
 - 已修复：<条目 — 一句话说明>
 - 已拒绝：<条目 — 理由>
 - 需要你决定：<有争议的设计取舍，没有就省略>

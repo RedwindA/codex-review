@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: 在代码任务完成时，调用 Codex CLI（gpt-6-astra）在冻结的工作区快照上对本次改动做独立 review，后台运行、不阻塞汇报和后续工作：首轮按改动的风险分档（skip / quick / standard 用 high，deep 用 xhigh）全面审查，之后只用 high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，或用户说"让 codex review""codex 审一下"时使用。
+description: 在代码任务完成时，调用 Codex CLI（gpt-6-astra）在冻结的工作区快照上对本次改动做独立 review，后台运行、不阻塞汇报和后续工作：首轮按改动的风险分档（skip / quick / standard 用 high，deep 用 xhigh）全面审查，之后只用 high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，用户说"让 codex review""codex 审一下"时使用，或用户让你处理夜间 review 报告时使用。
 user-invocable: true
 argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] [额外关注点]"
 ---
@@ -228,3 +228,13 @@ Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮�
 ```
 
 用户问 review 花了多少时间、档位阈值合不合适时，跑 `"${CLAUDE_SKILL_DIR}/scripts/stats.sh"` 看汇总。
+
+## 7. 处理夜间 review 报告
+
+`scripts/nightly.sh` 由 cron 每晚运行，用 `deep` 档审查各仓库当天合入的提交，报告写在 `~/.codex-review/nightly/<仓库目录名>/<日期>-<sha>.md`（同名的 `.prompt.md` 是当时的 prompt）。用户让你处理夜间报告时：
+
+1. 列出当前仓库对应目录下还没有处理过的报告（文件名不以 `.handled.md` 结尾，也不是 `.prompt.md`）。
+2. 按第 4 节逐条核验。报告针对的是当时的提交，代码之后可能又改过：以当前代码为准，先确认问题仍然存在。
+3. 把有效项当作一个新任务来修，修完照常走本 skill 的流程（先跑检查，定档，review）。
+4. 向用户汇报：已修复、已拒绝（附理由）、需要用户决定的项，以及建议写入审查备注的规则。
+5. 把处理完的报告改名为 `<原名>.handled.md`。

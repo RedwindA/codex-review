@@ -47,6 +47,20 @@ Each repo can keep review notes that every round sends to Codex: project convent
 
 The body is free text. Optional YAML frontmatter overrides the tiering rules (`deep`, `skip`, `quick_max_lines`, `deep_min_lines`). When a rejection reason generalizes, Claude proposes a note in its report and writes it only after you agree.
 
+## Nightly review
+
+`scripts/nightly.sh <repo>...` reviews, at `deep`, the commits that landed on each repo's current branch since its previous run (the first run covers the last 24 hours), in a frozen worktree of `HEAD`. Reports go to `~/.codex-review/nightly/<repo>/<date>-<sha>.md` (override with `CODEX_REVIEW_NIGHTLY_DIR`). A repo is marked reviewed only when its review succeeds, so a failed night is retried with the same commits. This is a safety net for the `quick` changes reviewed lightly during the day; ask Claude to "处理夜间 review 报告" to triage and fix the findings.
+
+Run it from cron. cron starts with a minimal `PATH`, so put the directories of `codex` and `node` on it:
+
+```bash
+crontab -e
+# every day at 03:00
+0 3 * * * PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin $HOME/.claude/skills/codex-review/scripts/nightly.sh $HOME/proj-a $HOME/proj-b >> $HOME/.codex-review/nightly.log 2>&1
+```
+
+On WSL, cron only runs while the distro is running, and is not started by default: enable systemd (`[boot] systemd=true` in `/etc/wsl.conf`) or run `sudo service cron start` after boot. A missed night is covered by the next run.
+
 ## Stats
 
 Each codex run appends a `round` record (mode, effort, seconds, exit status) to `~/.codex-review/stats.jsonl`, and Claude adds a `session` record when a review ends (tier, rounds, result, fixed, rejected, nits, pre-existing). `scripts/stats.sh` summarizes them: time per mode, and per tier the average rounds, first-round pass rate and rejection rate. A week or two of data tells you whether the thresholds and efforts are paying off, e.g. whether `deep` finds enough more than `standard` to justify `xhigh`. Set `CODEX_REVIEW_STATS` to another path, or to `/dev/null` to turn this off.
@@ -68,6 +82,7 @@ When a bug the review should have caught turns up later, record it so the misses
         ├── SKILL.md
         └── scripts/
             ├── classify.sh
+            ├── nightly.sh
             ├── record_stats.sh
             ├── run_review.sh
             ├── snapshot.sh

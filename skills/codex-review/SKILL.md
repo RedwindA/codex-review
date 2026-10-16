@@ -218,3 +218,13 @@ Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮�
 - 别人维护的仓库（例如开源贡献）：写进 `$(git rev-parse --path-format=absolute --git-common-dir)/codex-review/REVIEW.md`，它不会进入提交和 PR。仓库根目录已有 `REVIEW.md` 时，私有文件不会被读取，先告诉用户。
 
 如果 review 没有完成（CLI 出错、达到轮次上限），直接说明，不要写成"已通过"。
+
+最后记一条会话统计（`run_review.sh` 已经自动记下每轮的耗时；`skip` 档也要记，`rounds=0 result=skipped`）：
+
+```bash
+"${CLAUDE_SKILL_DIR}/scripts/record_stats.sh" kind=session session="$DIR" repo="$(git rev-parse --show-toplevel)" \
+  tier=<tier> reason="<classify 的 reason>" lines=<lines> rounds=<N> result=<passed|cap|failed|skipped> \
+  fixed=<已修复数> rejected=<已拒绝数> nits=<Nit 数> preexisting=<顺带发现数>
+```
+
+用户问 review 花了多少时间、档位阈值合不合适时，跑 `"${CLAUDE_SKILL_DIR}/scripts/stats.sh"` 看汇总。

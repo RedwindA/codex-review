@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: 在代码任务完成后、向用户汇报之前，调用 Codex CLI（gpt-6-astra）对本次改动做独立 review：首轮按改动的风险分档（skip / quick / standard 用 high，deep 用 xhigh）全面审查，之后只用 high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，或用户说"让 codex review""codex 审一下"时使用。
+description: 在代码任务完成时，调用 Codex CLI（gpt-6-astra）在冻结的工作区快照上对本次改动做独立 review，后台运行、不阻塞汇报和后续工作：首轮按改动的风险分档（skip / quick / standard 用 high，deep 用 xhigh）全面审查，之后只用 high 核验必要的修复；逐条核验意见，拒绝无意义的防御性编程，修复有效问题后再提交核验，循环直到通过。当你修改了代码并准备汇报"已完成"时使用，或用户说"让 codex review""codex 审一下"时使用。
 user-invocable: true
 argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] [额外关注点]"
 ---
@@ -9,43 +9,48 @@ argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] 
 
 **用户参数：** $ARGUMENTS
 
-在你认为任务完成、**向用户汇报之前**执行。目标是让一个独立的强模型挑错，但由你负责判断哪些意见值得采纳。Codex 是审阅者，不是决策者。
+在你认为任务完成时启动。codex 在冻结的快照上后台运行，启动后你就可以先向用户汇报（注明 review 仍在进行），review 结果出来后再处理。目标是让一个独立的强模型挑错，但由你负责判断哪些意见值得采纳。Codex 是审阅者，不是决策者。
 
-以下情况跳过：本次没有改动代码（纯问答、纯调研），定档结果是 `skip`（见第 1 节第 5 步），或用户明确说不需要 review。
+以下情况跳过：本次没有改动代码（纯问答、纯调研），定档结果是 `skip`（见第 1 节第 4 步），或用户明确说不需要 review。
 
 ## 1. 准备
 
-1. 确定 review 范围：
-   - 默认：工作区内所有未提交改动（staged + unstaged + untracked）。
-   - `--base <branch>`：当前分支相对该分支的改动。
-   - `--commit <sha>`：该提交引入的改动。
-   - 如果工作区里混有**不属于本次任务**的改动（对照会话开始时的 git status），在 prompt 里列出本次任务涉及的文件，让 codex 只看这些文件。
-2. **先跑确定性检查，全绿再启动 codex。** 按仓库规范（AGENTS.md / CLAUDE.md / CI 配置）跑格式化、lint、类型检查和相关测试，有失败就先修好。不要把 linter 和测试能抓到的问题留给 codex 花几分钟去找；也不要在 codex 运行期间才发现测试挂了，那样修复后 codex 审的就是旧代码。
-3. 在 scratchpad 目录（没有就用 `mktemp -d`）下建一个工作目录 `$DIR`，每轮使用 `$DIR/round-N-prompt.md` 和 `$DIR/round-N-review.md`。
-4. 每轮启动 codex 之前（包括第 1 轮，定档也要用到），先记录工作区快照：`"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh" > "$DIR/round-N.tree"`。它输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。第 N 轮（N≥2）要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
-5. **定档**：按变更本身（而不是"这是我写的"）决定首轮审查力度：
+1. **先跑确定性检查，全绿再启动 codex。** 按仓库规范（AGENTS.md / CLAUDE.md / CI 配置）跑格式化、lint、类型检查和相关测试，有失败就先修好。不要把 linter 和测试能抓到的问题留给 codex 花几分钟去找；也不要在 codex 运行期间才发现测试挂了，那样修复后 codex 审的就是旧代码。
+2. 在 scratchpad 目录（没有就用 `mktemp -d`）下建一个工作目录 `$DIR`，每轮使用 `$DIR/round-N-prompt.md` 和 `$DIR/round-N-review.md`。
+3. **确定范围，记下两个快照**：基线写进 `$DIR/base`，第 1 轮快照写进 `$DIR/round-1.tree`。本次 review 的范围始终是 `git diff <base> <round-1.tree>`。
+
+   | 范围 | `$DIR/base` | `$DIR/round-1.tree` |
+   |---|---|---|
+   | 默认：所有未提交改动 | `git rev-parse 'HEAD^{tree}'` | `"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh"` |
+   | `--base <branch>` | `git merge-base <branch> HEAD` | 同上（包含未提交改动） |
+   | `--commit <sha>` | `git rev-parse <sha>^` | `git rev-parse '<sha>^{tree}'` |
+
+   - `snapshot.sh` 输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。
+   - 之后每一轮（N≥2）启动前也记一次快照 `$DIR/round-N.tree`。第 N 轮要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
+   - `--commit` 指的不是 HEAD 时，之后各轮的快照还包含这个提交之后的改动，核验轮的 diff 末尾要用 `-- <修复涉及的文件>` 限定。
+   - 上一个任务的 review 还没结束你就开始了本任务时（见第 3 节"等待方式"），基线用本任务开始改代码前记下的快照，而不是 HEAD。
+   - 工作区里混有**不属于本次任务**的改动（对照会话开始时的 git status）时，记下本次任务涉及的文件，定档和 prompt 里的 diff 都在末尾加 `-- <文件...>`。
+4. **定档**：按变更本身（而不是"这是我写的"）决定首轮审查力度：
 
    ```bash
-   "${CLAUDE_SKILL_DIR}/scripts/classify.sh" HEAD "$(cat "$DIR/round-1.tree")"   # 默认范围
-   "${CLAUDE_SKILL_DIR}/scripts/classify.sh" <branch>...HEAD                    # --base
-   "${CLAUDE_SKILL_DIR}/scripts/classify.sh" <sha>^ <sha>                       # --commit
+   "${CLAUDE_SKILL_DIR}/scripts/classify.sh" "$(cat "$DIR/base")" "$(cat "$DIR/round-1.tree")" [-- <文件...>]
    ```
 
-   只审部分文件时在末尾加 `-- <文件...>`。脚本输出 `tier=`、`lines=`、`files=`、`reason=` 和 `notes=`（仓库审查备注的路径）。
+   脚本输出 `tier=`、`lines=`、`files=`、`reason=` 和 `notes=`（仓库审查备注的路径）。
 
    | 档位 | 默认条件 | 首轮 | 核验轮 |
    |---|---|---|---|
    | `skip` | 改动的文件全是文档、许可证、lockfile、快照、图片 | 不跑 codex，测试和 lint 全绿即可 | 无 |
    | `quick` | 不超过 50 行，且没碰敏感路径 | `high` | 无，修复靠测试把关 |
-   | `standard` | 其他普通改动 | `high` | 按第 5 步规则 |
-   | `deep` | 超过 400 行，或碰了鉴权、密钥、计费、数据迁移、CI、部署/发布/安装脚本等敏感路径 | `xhigh` | 按第 5 步规则 |
+   | `standard` | 其他普通改动 | `high` | 按第 5 节规则 |
+   | `deep` | 超过 400 行，或碰了鉴权、密钥、计费、数据迁移、CI、部署/发布/安装脚本等敏感路径 | `xhigh` | 按第 5 节规则 |
 
    - 用户参数里的 `--tier` 优先于脚本结果。
    - 这次改动要作为 PR 提交到**别人维护的仓库**时（例如 `git remote -v` 里有 `upstream`，或 origin 不属于用户），至少用 `deep`：那里消耗的是维护者的时间。
    - 你知道脚本看不出来的风险时（例如改动很小但涉及并发、缓存失效、数据删除），可以往上调档，并在汇报里说明原因；不要往下调。
    - 敏感路径、skip 列表和行数阈值可以在仓库的审查备注里覆盖，格式见 `scripts/classify.sh` 文件头。
-6. **读审查备注**：`classify.sh` 输出的 `notes=` 非空时，读这个文件。frontmatter 之后的正文是这个仓库跨会话积累的审查规则（项目约定、"这类问题不要报"及其原因），每一轮都原样放进 prompt 的 `Repo review notes` 一节。
-7. 维护一份**处理记录**（ledger），每轮都要带给 codex：
+5. **读审查备注**：`classify.sh` 输出的 `notes=` 非空时，读这个文件。frontmatter 之后的正文是这个仓库跨会话积累的审查规则（项目约定、"这类问题不要报"及其原因），每一轮都原样放进 prompt 的 `Repo review notes` 一节。
+6. 维护一份**处理记录**（ledger），每轮都要带给 codex：
    - 已修复：`[轮次] 标题 — 怎么修的`
    - 已拒绝：`[轮次] 标题 — 拒绝理由（具体说明为什么不成立或不必要）`
 
@@ -61,9 +66,8 @@ argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] 
 You are reviewing code changes made by another engineer. Do not modify any files.
 
 ## Scope
-<例：Review all uncommitted changes: inspect `git status`, `git diff HEAD`, and untracked files.>
-<或：Review `git diff <base>...HEAD`。/ Review commit <sha> (`git show <sha>`)。>
-<如有需要：Only these files belong to this change: ...>
+Review the change `git diff <base> <round-1 tree>`<如有需要：` -- <文件...>`，并写明 "Only these files belong to this change.">.
+The current directory is a read-only checkout of <round-1 tree>; read files there for context. It is a frozen snapshot, so `git status` and `git diff HEAD` tell you nothing about the change. Ignored files (dependencies, build outputs, local config) and submodules are not checked out; do not report their absence.
 
 ## Intent of the change
 <2-6 句：用户要什么、你做了什么、关键的设计取舍>
@@ -89,8 +93,8 @@ Follow these notes: they record what this repo does and does not want reported, 
 You are verifying fixes another engineer made after a previous code review. Do not modify any files.
 
 ## Scope
-Review only the fix delta since the previous round: `git diff <round-(N-1) tree> <round-N tree>`.
-Both ids are git tree snapshots of the working tree; the current working tree matches <round-N tree>.
+Review only the fix delta since the previous round: `git diff <round-(N-1) tree> <round-N tree>`<如有需要：` -- <修复涉及的文件>`>.
+Both ids are git tree snapshots. The current directory is a read-only checkout of <round-N tree>; ignored files and submodules are not checked out.
 Read surrounding code only as far as you need to judge the delta. Do not re-review code the delta does not touch.
 
 ## Intent of the change
@@ -124,18 +128,20 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 ## 3. 运行
 
 ```bash
-# 第 1 轮：第三个参数是档位 quick | standard | deep
-"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-1-prompt.md" "$DIR/round-1-review.md" <tier>
+# 第 1 轮：第三个参数是档位 quick | standard | deep，第四个是本轮快照
+"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-1-prompt.md" "$DIR/round-1-review.md" <tier> "$(cat "$DIR/round-1.tree")"
 # 第 2 轮起
-"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-N-prompt.md" "$DIR/round-N-review.md" verify
+"${CLAUDE_SKILL_DIR}/scripts/run_review.sh" "$DIR/round-N-prompt.md" "$DIR/round-N-review.md" verify "$(cat "$DIR/round-N.tree")"
 ```
 
 （`${CLAUDE_SKILL_DIR}` 指本 SKILL.md 所在目录。如果它没有被替换成实际路径，就用本文件旁边 `scripts/` 下脚本的绝对路径。）
 
-- 脚本会 cd 到 git 仓库根目录，以 `-m gpt-6-astra`、只读沙箱和 `--ephemeral` 运行，打印 codex 的最终结论。思考强度：`deep` 是 `xhigh`，`quick`、`standard` 和 `verify` 是 `high`。完整过程日志保存在 `$DIR/round-N-review.log`。
+- 脚本把快照检出到临时 worktree（`$DIR/round-N-review.wt`，跳过 hooks 和 LFS 下载），在那里运行 codex，退出时删除 worktree。codex 读的是冻结的快照，所以你在它运行期间改代码不会影响它。如果脚本被强行中止，`git worktree list` 里可能留下这个 worktree，用 `git worktree remove --force <路径>` 清理。
+- 仓库很大、检出明显很慢时，可以省略第四个参数，让 codex 直接读真实工作区。这时 prompt 的 Scope 要改成读当前工作区，而且在它结束前**不要改动被审文件**。
+- 脚本以 `-m gpt-6-astra`、只读沙箱和 `--ephemeral` 运行，打印 codex 的最终结论。思考强度：`deep` 是 `xhigh`，`quick`、`standard` 和 `verify` 是 `high`。完整过程日志保存在 `$DIR/round-N-review.log`。
 - 脚本自带硬超时（`deep` 默认 1800 秒，其他 900 秒，可用 `CODEX_REVIEW_TIMEOUT` 覆盖），保证进程一定会退出，从而一定会触发完成通知。
 
-### 等待方式：后台运行 + 完成通知，不要轮询
+### 等待方式：后台运行，不阻塞，不要轮询
 
 `deep` 档的 xhigh 通常要 5–10 分钟，改动大时更久，可能超过前台 Bash 最长 10 分钟的上限；其他档位和核验轮也统一按同样方式运行。因此：
 
@@ -144,9 +150,11 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
    - 用 `sleep`、`while` 循环、Monitor 或 ScheduleWakeup 去检查进度；
    - 反复 `tail`/`cat` 日志或输出文件，或用 `ps`/`pgrep` 查 codex 是否还在跑；
    - 在结束前读取 `round-N-review.md`（codex 结束时才写入，中途读到的要么不存在，要么是旧内容）。
-3. 等待期间可以做和 review 结论无关、且不修改被审代码的工作，比如整理处理记录、起草汇报的其余部分。**不要改动被审文件**，否则 codex 看到的代码和你之后修复的代码会不一致。
-4. 没有其他事可做时，直接结束本轮回复，告诉用户"codex review 第 N 轮正在后台运行（通常需要 X 分钟），完成后自动继续"。不要为了等待而保持回合开着。
-5. 收到完成通知后，读取通知里的输出（即脚本打印的最终结论），退出码非 0 时再看日志尾部，然后进入第 4 步。
+3. **不要干等。** codex 审的是冻结的快照，所以：
+   - 第 1 轮启动后，就向用户汇报任务结果，并明确写"codex review（<tier> 档，通常需要 X 分钟）正在后台运行，结果出来后我会处理并补充 review 摘要"。不要写成已经通过 review。然后结束本轮回复，不要为了等待而保持回合开着。
+   - 等待期间用户提出新任务，可以直接开始做。开始改代码前，先用 `snapshot.sh` 记下新任务的基线，供新任务 review 时用作 `base`，这样两个任务的 review 范围不会混在一起。
+4. 收到完成通知后，读取通知里的输出（即脚本打印的最终结论），退出码非 0 时再看日志尾部，然后进入第 4 节。如果你正在做别的任务，先把手头这一步做完，不要留下改了一半的文件，再处理 review 意见。
+5. 意见指向的是快照里的代码。核验时以当前代码为准：先确认那段代码还在、问题仍然存在，行号可能已经变了。
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
 
 - 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL`、`CODEX_REVIEW_DEEP_EFFORT` / `CODEX_REVIEW_EFFORT`（standard）/ `CODEX_REVIEW_QUICK_EFFORT` / `CODEX_REVIEW_VERIFY_EFFORT` 覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
@@ -184,7 +192,7 @@ codex 给的标签只是参考，判定以你的核验为准：
 
 1. 修复所有"有效"项，按仓库规范跑相关的格式化和测试（例如 AGENTS.md 要求的 `just fmt`、`just test -p ...`），全绿后再进入下一轮。
 2. **判断要不要核验轮。** `quick` 档从不跑核验轮，修复后测试全绿即通过。其他档位，只有本轮修了至少一条 Important，而且修复不是一眼就能确认对错的（例如改了控制流、接口、并发或错误处理，或修复超过约 20 行），才进入核验轮。如果修的只有 Nit、只有测试，或只是几行机械修改（改名、补参数、修常量），测试全绿就视为通过，不再跑 codex。
-3. 需要核验轮时：更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
+3. 需要核验轮时：更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。如果两次快照之间还夹着别的任务的改动，diff 末尾用 `-- <修复涉及的文件>` 限定范围，并在 Fixes to verify 里写清楚哪些改动属于修复。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
 4. **通过条件**，满足任一即可：
    - codex 明确表示没有可操作的问题；
    - codex 剩下的意见全是此前已拒绝的项，且没有提出新的具体证据；
@@ -194,7 +202,7 @@ codex 给的标签只是参考，判定以你的核验为准：
 
 ## 6. 汇报
 
-在给用户的最终汇报末尾附上简短的 review 摘要：
+review 结束后给出简短的 review 摘要。如果第 1 轮启动后你已经先汇报过任务结果，就单独发一条消息，只写 review 摘要和因 review 而做的改动，不要重复整份汇报：
 
 ```
 Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮后通过

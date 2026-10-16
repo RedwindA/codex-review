@@ -49,11 +49,12 @@ The body is free text. Optional YAML frontmatter overrides the tiering rules (`d
 
 ## Nightly review
 
-`scripts/nightly.sh <repo>...` reviews, at `deep`, the commits that landed on each repo's current branch since its previous run (the first run covers the last 24 hours), in a frozen worktree of `HEAD`. Reports go to `~/.codex-review/nightly/<repo>/<date>-<sha>.md` (override with `CODEX_REVIEW_NIGHTLY_DIR`). A repo is marked reviewed only when its review succeeds, so a failed night is retried with the same commits. This is a safety net for the `quick` changes reviewed lightly during the day; ask Claude to "处理夜间 review 报告" to triage and fix the findings.
+`scripts/nightly.sh <repo>...` reviews, at `deep`, the commits that landed on each repo's current branch since its previous run (the first run covers the last 24 hours), in a frozen worktree of `HEAD`. Reports go to `~/.codex-review/nightly/<absolute repo path>/<date>-<sha>.md` (override the root with `CODEX_REVIEW_NIGHTLY_DIR`). A repo is marked reviewed only when its review succeeds, so a failed night is retried with the same commits, including on the first run. This is a safety net for the `quick` changes reviewed lightly during the day; ask Claude to "处理夜间 review 报告" to triage and fix the findings.
 
 Run it from cron. cron starts with a minimal `PATH`, so put the directories of `codex` and `node` on it:
 
 ```bash
+mkdir -p ~/.codex-review   # cron opens the log before nightly.sh runs
 crontab -e
 # every day at 03:00
 0 3 * * * PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin $HOME/.claude/skills/codex-review/scripts/nightly.sh $HOME/proj-a $HOME/proj-b >> $HOME/.codex-review/nightly.log 2>&1

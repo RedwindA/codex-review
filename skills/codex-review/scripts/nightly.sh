@@ -3,9 +3,9 @@
 # For cron. Reviews, at deep effort, the commits that landed on each repo's current branch since
 # the previous nightly run (the first run covers the last 24 hours), in a frozen worktree of HEAD,
 # so it never touches the working tree. Reports go to
-# ${CODEX_REVIEW_NIGHTLY_DIR:-~/.codex-review/nightly}/<repo-name>/<date>-<sha>.md.
+# ${CODEX_REVIEW_NIGHTLY_DIR:-~/.codex-review/nightly}/<absolute repo path>/<date>-<sha>.md.
 # A repo is marked as reviewed up to HEAD only when its review succeeds, so a failed run is
-# retried with the same commits next time. Changes that classify.sh rates `skip` are marked
+# retried with the same commits next time (a failed first run records its baseline for that). Changes that classify.sh rates `skip` are marked
 # without a review. Exits non-zero if any repo failed.
 set -uo pipefail
 
@@ -25,13 +25,24 @@ review_repo() {
   branch=$(git rev-parse --abbrev-ref HEAD)
   marker="$(git rev-parse --path-format=absolute --git-common-dir)/codex-review/nightly-last"
 
+  # The marker holds the commit reviewed up to, or the empty tree when everything is pending.
+  local had_marker=0
   base=""
-  if [ -f "$marker" ] && last=$(git rev-parse -q --verify "$(cat "$marker")^{commit}"); then
-    # After a branch switch or rebase, start from where the histories meet.
-    base=$(git merge-base "$last" "$head" || true)
+  if [ -f "$marker" ]; then
+    last=$(cat "$marker")
+    if [ "$last" = "$empty_tree" ]; then
+      base=$empty_tree
+      had_marker=1
+    elif last=$(git rev-parse -q --verify "$last^{commit}"); then
+      # After a branch switch or rebase, start from where the histories meet.
+      base=$(git merge-base "$last" "$head" || true)
+      had_marker=1
+    fi
   fi
   if [ -z "$base" ]; then
     base=$(git rev-list -1 --before="24 hours ago" "$head")
+    # The whole history is younger than a day.
+    [ -n "$base" ] || base=$empty_tree
   fi
   if [ "$base" = "$head" ]; then
     echo "$repo: no new commits"
@@ -39,9 +50,7 @@ review_repo() {
   fi
 
   local commits
-  if [ -z "$base" ]; then
-    # The whole history is younger than a day.
-    base=$empty_tree
+  if [ "$base" = "$empty_tree" ]; then
     commits=$(git log --format='- %h %s' "$head")
   else
     commits=$(git log --format='- %h %s' "$base..$head")
@@ -58,7 +67,7 @@ review_repo() {
   fi
 
   local out_dir stem prompt out
-  out_dir="$nightly_dir/$(basename "$PWD")"
+  out_dir="$nightly_dir$PWD"
   mkdir -p "$out_dir"
   stem="$out_dir/$(date +%Y-%m-%d)-$(git rev-parse --short "$head")"
   prompt="$stem.prompt.md"
@@ -97,7 +106,13 @@ EOF
   } >"$prompt"
 
   echo "$repo: reviewing ${base:0:12}..${head:0:12} ($(sed -n 's/^reason=//p' <<<"$classification"))"
-  "$script_dir/run_review.sh" "$prompt" "$out" deep "$head" >/dev/null || return 1
+  if ! "$script_dir/run_review.sh" "$prompt" "$out" deep "$head" >/dev/null; then
+    # Without a marker the next run would recompute a later 24-hour window and drop these commits.
+    if [ "$had_marker" -eq 0 ]; then
+      mkdir -p "$(dirname "$marker")" && echo "$base" >"$marker"
+    fi
+    return 1
+  fi
   mkdir -p "$(dirname "$marker")" && echo "$head" >"$marker"
   echo "$repo: report at $out"
 }

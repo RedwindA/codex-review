@@ -23,7 +23,7 @@ argument-hint: "[--base <branch> | --commit <sha>] [--tier quick|standard|deep] 
    |---|---|---|
    | 默认：所有未提交改动 | `git rev-parse 'HEAD^{tree}'` | `"${CLAUDE_SKILL_DIR}/scripts/snapshot.sh"` |
    | `--base <branch>` | `git merge-base <branch> HEAD` | 同上（包含未提交改动） |
-   | `--commit <sha>` | `git rev-parse <sha>^` | `git rev-parse '<sha>^{tree}'` |
+   | `--commit <sha>` | `git rev-parse <sha>^`（根提交没有父提交，用空树 `git hash-object -t tree /dev/null`） | `git rev-parse '<sha>^{tree}'` |
 
    - `snapshot.sh` 输出一个 git tree id，包含已跟踪的改动和未跟踪的文件，不会动真正的 index、HEAD 或 stash。
    - 之后每一轮（N≥2）启动前也记一次快照 `$DIR/round-N.tree`。第 N 轮要核验的修复，就是 `git diff <round-(N-1).tree> <round-N.tree>`。
@@ -154,7 +154,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
    - 第 1 轮启动后，就向用户汇报任务结果，并明确写"codex review（<tier> 档，通常需要 X 分钟）正在后台运行，结果出来后我会处理并补充 review 摘要"。不要写成已经通过 review。然后结束本轮回复，不要为了等待而保持回合开着。
    - 等待期间用户提出新任务，可以直接开始做。开始改代码前，先用 `snapshot.sh` 记下新任务的基线，供新任务 review 时用作 `base`，这样两个任务的 review 范围不会混在一起。
 4. 收到完成通知后，读取通知里的输出（即脚本打印的最终结论），退出码非 0 时再看日志尾部，然后进入第 4 节。如果你正在做别的任务，先把手头这一步做完，不要留下改了一半的文件，再处理 review 意见。
-5. 意见指向的是快照里的代码。核验时以当前代码为准：先确认那段代码还在、问题仍然存在，行号可能已经变了。
+5. 意见指向的是快照里的代码，文件路径可能带着临时 worktree 的前缀（`…/round-N-review.wt/`），去掉前缀就是仓库内的相对路径。核验时以当前代码为准：先确认那段代码还在、问题仍然存在，行号可能已经变了。
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
 
 - 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL`、`CODEX_REVIEW_DEEP_EFFORT` / `CODEX_REVIEW_EFFORT`（standard）/ `CODEX_REVIEW_QUICK_EFFORT` / `CODEX_REVIEW_VERIFY_EFFORT` 覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
@@ -231,7 +231,7 @@ Codex review（gpt-6-astra，<tier> 档：<reason>，首轮 <effort>）：N 轮�
 
 ## 7. 处理夜间 review 报告
 
-`scripts/nightly.sh` 由 cron 每晚运行，用 `deep` 档审查各仓库当天合入的提交，报告写在 `~/.codex-review/nightly/<仓库目录名>/<日期>-<sha>.md`（同名的 `.prompt.md` 是当时的 prompt）。用户让你处理夜间报告时：
+`scripts/nightly.sh` 由 cron 每晚运行，用 `deep` 档审查各仓库当天合入的提交，报告写在 `<报告根目录><仓库根目录的绝对路径>/<日期>-<sha>.md`（同名的 `.prompt.md` 是当时的 prompt）。报告根目录默认是 `~/.codex-review/nightly`；用户的 crontab 里设置了 `CODEX_REVIEW_NIGHTLY_DIR` 时以它为准（拿不准就 `crontab -l` 看一下）。例如仓库 `/home/me/proj` 的报告在 `~/.codex-review/nightly/home/me/proj/`。用户让你处理夜间报告时：
 
 1. 列出当前仓库对应目录下还没有处理过的报告（文件名不以 `.handled.md` 结尾，也不是 `.prompt.md`）。
 2. 按第 4 节逐条核验。报告针对的是当时的提交，代码之后可能又改过：以当前代码为准，先确认问题仍然存在。

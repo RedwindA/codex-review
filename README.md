@@ -24,8 +24,8 @@ Re-run the same command to update.
 
 1. Scope the review (uncommitted changes by default; `--base <branch>` or `--commit <sha>` supported).
 2. Run `codex exec review` in a read-only sandbox, with the change's intent and a ledger of previously fixed/rejected findings.
-3. Verify every finding: fix real bugs; reject false positives and defensive checks for states the types or callers already rule out; surface out-of-scope issues and design trade-offs to the user.
-4. Fix, re-run tests, then run a verify round: Codex reviews only the fix delta between two working-tree snapshots (`git diff <prev-tree> <cur-tree>`, taken by `scripts/snapshot.sh` without touching the index), at `high` reasoning, instead of re-reviewing the whole change. Stops when Codex has no new actionable findings, or after 5 rounds.
+3. Verify every finding (Codex tags each as `[Important]`, `[Nit]` or `[Pre-existing]` and names its bug class): fix real bugs, and every other instance of the same class in the change; reject false positives and defensive checks for states the types or callers already rule out; surface out-of-scope issues and design trade-offs to the user.
+4. Fix, re-run tests, then run a verify round: Codex reviews only the fix delta between two working-tree snapshots (`git diff <prev-tree> <cur-tree>`, taken by `scripts/snapshot.sh` without touching the index), at `high` reasoning, instead of re-reviewing the whole change. Verify rounds run only when a non-trivial fix of an `[Important]` finding needs checking; Nit-only, test-only or mechanical fixes stop at green tests. Stops when Codex has no new actionable findings, or after 3 rounds, at which point the approach itself is put back to the user.
 
 Reviews run as Claude Code background tasks and resume on the completion notification instead of polling. A hard timeout (`CODEX_REVIEW_TIMEOUT`, default 1800s) guarantees the task exits.
 

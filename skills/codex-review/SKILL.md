@@ -51,6 +51,8 @@ You are reviewing code changes made by another engineer. Do not modify any files
 - Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
+- Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).
+- Add a line "Class: <bug class>" to each finding (e.g. "unescaped shell interpolation", "missing await on async call"), and list every place in the change with the same class of bug, not just the first one you saw.
 - If there are no actionable issues, say explicitly: "No actionable issues found."
 
 ```
@@ -78,6 +80,8 @@ Read surrounding code only as far as you need to judge the delta. Do not re-revi
 - Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
+- Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).
+- Add a line "Class: <bug class>" to each finding (e.g. "unescaped shell interpolation", "missing await on async call"), and list every place in the change with the same class of bug, not just the first one you saw.
 - If every fix holds and the delta introduces no actionable issue, say explicitly: "No actionable issues found."
 
 ## Rejected items
@@ -116,7 +120,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 6. 如果用户中途问进度，只回答"仍在运行"。只有用户明确要求时，才看一次日志尾部。
 
 - 如果失败（认证、网络、模型不可用、超时退出码 124），先看日志尾部。可以用环境变量 `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`（第 1 轮）/ `CODEX_REVIEW_VERIFY_EFFORT`（核验轮）覆盖模型和思考强度，但**只在用户同意后**才降级；否则停止循环，并在汇报里说明 review 没有完成。
-- 输出格式通常是 `- [P0..P3] 标题 — 文件:行` 加一段说明。
+- 输出格式通常是 `- [P0..P3] [Important|Nit|Pre-existing] 标题 — 文件:行`，加一段说明和一行 `Class:`。
 
 ## 4. 逐条核验（关键步骤）
 
@@ -141,16 +145,22 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 
 拿不准时，以能否构造出具体触发场景为准：构造得出来就修，构造不出来就拒绝并写明理由。
 
+codex 给的标签只是参考，判定以你的核验为准：
+- `[Pre-existing]`：核实确实不是本次改动引入的，就按"超出范围"处理。
+- `[Nit]`：成立且修起来很便宜就顺手修，否则列进汇报。Nit 的修复不会触发核验轮。
+- **按类别修，不要只修一行。** 修复一条有效意见时，按它的 `Class:` 在本次改动涉及的代码里搜索同类问题（grep 相同的调用、模式或写法），一次修完所有实例。否则下一轮 codex 会再报同类问题的另一处，白白多一轮。改动之外的同类既有问题，列为"顺带发现"。
+
 ## 5. 修复并复审
 
 1. 修复所有"有效"项，按仓库规范跑相关的格式化和测试（例如 AGENTS.md 要求的 `just fmt`、`just test -p ...`），全绿后再进入下一轮。
-2. 更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
-3. **通过条件**，满足任一即可：
+2. **判断要不要核验轮。** 只有本轮修了至少一条 Important，而且修复不是一眼就能确认对错的（例如改了控制流、接口、并发或错误处理，或修复超过约 20 行），才进入核验轮。如果修的只有 Nit、只有测试，或只是几行机械修改（改名、补参数、修常量），测试全绿就视为通过，不再跑 codex。
+3. 需要核验轮时：更新处理记录，记录快照，然后用 2b 模板进入下一轮（轮次 +1）。核验轮里 codex 对改动之外代码提出的意见，按"超出范围"处理。
+4. **通过条件**，满足任一即可：
    - codex 明确表示没有可操作的问题；
    - codex 剩下的意见全是此前已拒绝的项，且没有提出新的具体证据；
    - 剩下的只有"超出范围"或"有争议的设计取舍"项。
-4. **上限 5 轮**。到了上限仍未收敛，停止循环，把分歧原样交给用户，不要为了"通过"而做你认为错误的修改。
-5. 如果 codex 在 Disputed 里给出了新证据，要重新核验，不能因为之前拒绝过就坚持原判。
+5. **上限 3 轮**（首轮加 2 次核验）。到了上限仍未收敛，往往说明方案本身有问题，而不是还差一处修复：停止循环，不要继续打补丁，把分歧原样交给用户，并说明你是否认为应该换一种实现思路。不要为了"通过"而做你认为错误的修改。
+6. 如果 codex 在 Disputed 里给出了新证据，要重新核验，不能因为之前拒绝过就坚持原判。
 
 ## 6. 汇报
 

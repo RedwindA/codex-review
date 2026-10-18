@@ -96,7 +96,7 @@ EOF
 
 ## Review guidance
 - Report only issues that are real and actionable: bugs, behavioral regressions, broken edge cases that can actually occur, security problems, concurrency/resource issues, clear violations of this repo's conventions (AGENTS.md / CLAUDE.md), and missing tests for new behavior.
-- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
+- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, the commit that introduced it, a concrete triggering scenario, and the fix.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem these commits introduce), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code these commits did not introduce).

@@ -70,7 +70,11 @@ Review the change `git diff <base> <round-1 tree>`<如有需要：` -- <文件..
 The current directory is a read-only checkout of <round-1 tree>; read files there for context. It is a frozen snapshot, so `git status` and `git diff HEAD` tell you nothing about the change. Ignored files (dependencies, build outputs, local config) and submodules are not checked out; do not report their absence.
 
 ## Intent of the change
-<2-6 句：用户要什么、你做了什么、关键的设计取舍>
+<2-6 句：用户要什么、你做了什么、关键的设计取舍。只写意图，不写结论：改动依赖的保证（如"计数一定会过期""这条路径不会被并发调用"）不要写成事实，放进下面的 Claims to verify>
+
+## Claims to verify
+<改动依赖、但你没有在所有输入和配置下证明过的保证，每条一行；没有就删掉这一节>
+These are the author's claims, not facts. Check each one against the code, including boundary values of configuration and external input, and report any that does not hold as a finding.
 
 ## Repo review notes
 <审查备注正文；没有备注就删掉这一节>
@@ -78,7 +82,7 @@ Follow these notes: they record what this repo does and does not want reported, 
 
 ## Review guidance
 - Report only issues that are real and actionable: bugs, behavioral regressions, broken edge cases that can actually occur, security problems, concurrency/resource issues, clear violations of this repo's conventions (AGENTS.md / CLAUDE.md), and missing tests for new behavior.
-- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
+- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).
@@ -111,7 +115,7 @@ Follow these notes: they record what this repo does and does not want reported, 
 - For each fix: does it actually resolve the original finding, including its triggering scenario? Is it complete?
 - Report new problems only if the delta introduces them: bugs, behavioral regressions, broken edge cases that can actually occur, security problems, and missing tests for the fix.
 - Do not report issues in code the delta did not change, unless the delta now relies on that code in a way that breaks.
-- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it.
+- Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).

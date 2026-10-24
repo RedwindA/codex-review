@@ -85,6 +85,7 @@ Follow these notes: they record what this repo does and does not want reported, 
 - Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
+- For race-condition and security findings, state the preconditions the scenario needs (which interleaving, which attacker capability) and the concrete damage.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).
 - Add a line "Class: <bug class>" to each finding (e.g. "unescaped shell interpolation", "missing await on async call"), and list every place in the change with the same class of bug, not just the first one you saw.
 - If there are no actionable issues, say explicitly: "No actionable issues found."
@@ -118,6 +119,7 @@ Follow these notes: they record what this repo does and does not want reported, 
 - Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, a concrete triggering scenario, and the fix.
+- For race-condition and security findings, state the preconditions the scenario needs (which interleaving, which attacker capability) and the concrete damage.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem this change introduces), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code this change did not introduce).
 - Add a line "Class: <bug class>" to each finding (e.g. "unescaped shell interpolation", "missing await on async call"), and list every place in the change with the same class of bug, not just the first one you saw.
 - If every fix holds and the delta introduces no actionable issue, say explicitly: "No actionable issues found."
@@ -175,6 +177,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 | **无意义防御性编程** | 见下方清单 | 拒绝，说明是哪条不变量或类型保证排除了该情况 |
 | **超出范围** | 问题早已存在、不是本次改动引入的，且不影响本次任务 | 不修，汇报时作为"顺带发现"告诉用户 |
 | **有争议的设计取舍** | 两种做法都说得通，涉及产品或架构判断 | 不擅自改，汇报时交给用户决定 |
+| **真实但概率极低、修复代价高** | 能构造出触发场景，但前提很罕见（特定的并发交错、攻击者已有某种权限），而修复要引入锁、重试、新状态、新配置或新抽象 | 不擅自改，汇报时写清会坏成什么样、触发前提和大致可能性、修复增加的复杂度，交给用户决定 |
 
 **应当拒绝的防御性编程**：
 - 对类型系统、构造函数或唯一调用方已经保证的值再做 null/None/空值/越界检查。
@@ -185,7 +188,7 @@ Do not re-raise them unless you have a NEW concrete argument (a reproducible sce
 
 **不属于**无意义防御的（这些要认真对待）：外部输入（用户输入、网络、文件、环境变量、跨进程或跨版本数据）的校验；codex 能给出具体违反路径的"不变量"；资源泄漏；并发竞态；数据丢失；安全边界。
 
-拿不准时，以能否构造出具体触发场景为准：构造得出来就修，构造不出来就拒绝并写明理由。
+拿不准时，以能否构造出具体触发场景为准：构造不出来就拒绝并写明理由；构造得出来就修，除非前提罕见、修复又会明显增加复杂度，这种按"真实但概率极低、修复代价高"交给用户。
 
 codex 给的标签只是参考，判定以你的核验为准：
 - `[Pre-existing]`：核实确实不是本次改动引入的，就按"超出范围"处理。
@@ -200,7 +203,7 @@ codex 给的标签只是参考，判定以你的核验为准：
 4. **通过条件**，满足任一即可：
    - codex 明确表示没有可操作的问题；
    - codex 剩下的意见全是此前已拒绝的项，且没有提出新的具体证据；
-   - 剩下的只有"超出范围"或"有争议的设计取舍"项。
+   - 剩下的只有"超出范围""有争议的设计取舍"或"真实但概率极低、修复代价高"项。
 5. **上限 3 轮**（首轮加 2 次核验）。到了上限仍未收敛，往往说明方案本身有问题，而不是还差一处修复：停止循环，不要继续打补丁，把分歧原样交给用户，并说明你是否认为应该换一种实现思路。不要为了"通过"而做你认为错误的修改。
 6. 如果 codex 在 Disputed 里给出了新证据，要重新核验，不能因为之前拒绝过就坚持原判。
 
@@ -212,7 +215,7 @@ review 结束后给出简短的 review 摘要。如果第 1 轮启动后你已�
 Codex review（<tier> 档：<reason>；首轮 <model> <effort>，<秒数>s，<输入 token 数>k in / <输出 token 数>k out）：N 轮后通过
 - 已修复：<条目 — 一句话说明>
 - 已拒绝：<条目 — 理由>
-- 需要你决定：<有争议的设计取舍，没有就省略>
+- 需要你决定：<有争议的设计取舍；概率极低但修复代价高的项写明故障模式、触发前提和可能性、修复代价；没有就省略>
 - 顺带发现：<超出范围的既有问题，没有就省略>
 - 建议写入审查备注：<可复用的拒绝理由，没有就省略>
 ```

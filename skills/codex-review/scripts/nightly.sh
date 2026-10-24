@@ -99,6 +99,7 @@ EOF
 - Do NOT suggest defensive programming for states the types, callers, or invariants already rule out (redundant null/empty checks, try/catch that just swallows or logs, fallback values for impossible cases, re-validating trusted internal inputs). If you think an invariant does not hold, show the concrete path that violates it. This does not cover external input (user input, network, files, environment variables, config, data from other processes or versions): check how the change behaves at its boundary values (zero, negative, empty, missing) and report concrete failures.
 - Do NOT report pure style preferences or speculative refactors.
 - For each finding, give file:line, the commit that introduced it, a concrete triggering scenario, and the fix.
+- For race-condition and security findings, state the preconditions the scenario needs (which interleaving, which attacker capability) and the concrete damage.
 - Start each finding's title with exactly one tag: [Important] (a real bug, regression, security or data problem these commits introduce), [Nit] (a minor real issue: a misleading name, a small missing test, an unclear error message), or [Pre-existing] (a real problem in code these commits did not introduce).
 - Add a line "Class: <bug class>" to each finding (e.g. "unescaped shell interpolation", "missing await on async call"), and list every place in the change with the same class of bug, not just the first one you saw.
 - If there are no actionable issues, say explicitly: "No actionable issues found."

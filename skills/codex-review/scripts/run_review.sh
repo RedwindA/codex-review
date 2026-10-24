@@ -78,13 +78,16 @@ fi
 
 # Sums the final token usage of every codex session file belonging to the thread: the review runs
 # in a child thread whose session file names the parent, and the --json usage reports zeros.
-# Prints "input cached output reasoning".
+# Prints "input cached output reasoning model", where model is the one the session files show
+# was used (empty if none says).
 thread_tokens() {
-  local thread=$1 stamp=$2 file usage key in=0 cached=0 out=0 reasoning=0
+  local thread=$1 stamp=$2 file usage key in=0 cached=0 out=0 reasoning=0 used_model=""
   [ -d "$sessions_dir" ] || { echo "0 0 0 0"; return; }
   while IFS= read -r file; do
     head -1 "$file" | grep -qE "\"(id|parent_thread_id)\":\"$thread\"" || continue
     usage=$(grep '"type":"token_count"' "$file" | tail -1 | grep -o '"total_token_usage":{[^}]*}') || continue
+    [ -n "$used_model" ] ||
+      used_model=$(grep -m1 '"type":"turn_context"' "$file" | grep -o -m1 '"model":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
     for key in input_tokens cached_input_tokens output_tokens reasoning_output_tokens; do
       local n
       n=$(grep -o "\"$key\":[0-9]*" <<<"$usage" | cut -d: -f2)
@@ -96,7 +99,7 @@ thread_tokens() {
       esac
     done
   done < <(find "$sessions_dir" -name 'rollout-*.jsonl' -newer "$stamp" 2>/dev/null)
-  echo "$in $cached $out $reasoning"
+  echo "$in $cached $out $reasoning $used_model"
 }
 
 stamp=$(mktemp)
@@ -104,6 +107,7 @@ start=$SECONDS
 status=0
 timeout --kill-after=30 "$timeout_secs" codex exec review \
   -m "$model" \
+  -c "review_model=\"$model\"" \
   -c "model_reasoning_effort=\"$effort\"" \
   -c 'sandbox_mode="read-only"' \
   --json \
@@ -117,7 +121,12 @@ if [ -n "$thread" ]; then
   tokens=$(thread_tokens "$thread" "$stamp")
 fi
 rm -f "$stamp"
-read -r in_tokens cached_tokens out_tokens reasoning_tokens <<<"$tokens"
+read -r in_tokens cached_tokens out_tokens reasoning_tokens used_model <<<"$tokens"
+# Record the model that actually ran, so stats price the usage correctly.
+if [ -n "${used_model:-}" ] && [ "$used_model" != "$model" ]; then
+  echo "warning: requested $model but codex ran $used_model" >&2
+  model=$used_model
+fi
 
 "$script_dir/record_stats.sh" kind=round session="$(dirname "$out_file")" repo="$repo_root" \
   mode="$mode" effort="$effort" model="$model" seconds="$seconds" exit="$status" \

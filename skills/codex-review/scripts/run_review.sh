@@ -43,7 +43,8 @@ esac
 timeout_secs=${CODEX_REVIEW_TIMEOUT:-$default_timeout}
 
 prompt_file=$(realpath "$prompt_file")
-out_file=$(realpath -m "$out_file")
+touch "$out_file"  # BSD realpath has no -m; the file must exist
+out_file=$(realpath "$out_file")
 log_file="${out_file%.*}.log"
 events_file="${out_file%.*}.events.jsonl"
 rm -f "$out_file"
